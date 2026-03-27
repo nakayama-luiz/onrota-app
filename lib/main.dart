@@ -316,6 +316,8 @@ class _LocationPageState extends State<LocationPage> {
   String _cpf = '';
   Trip? _currentTrip;
   bool _isRunning = false;
+  int _currentIndex = 0; // 0 = Localização, 1 = Tarefas
+  bool _showedSnackbar = false;
 
   @override
   void initState() {
@@ -353,6 +355,9 @@ class _LocationPageState extends State<LocationPage> {
       await saveStoredTrip(trip);
       final key = trip.key;
       await saveStoredKey(key);
+      setState(() {
+        _showedSnackbar = false; // Mostra snackbar novamente
+      });
     } else {
       await removeStoredTrip();
     }
@@ -434,13 +439,29 @@ class _LocationPageState extends State<LocationPage> {
         title: const Text('Monitor de Localização'),
         backgroundColor: _isRunning ? Colors.green : null,
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: _buildCurrentStep(),
-          ),
-        ],
-      ),
+      body: _buildCurrentStep(),
+      bottomNavigationBar: _currentTrip != null ? _buildBottomNavigation() : null,
+    );
+  }
+
+  Widget _buildBottomNavigation() {
+    return BottomNavigationBar(
+      currentIndex: _currentIndex,
+      onTap: (index) {
+        setState(() {
+          _currentIndex = index;
+        });
+      },
+      items: const [
+        BottomNavigationBarItem(
+          icon: Icon(Icons.location_on),
+          label: 'Localização',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.task),
+          label: 'Tarefas',
+        ),
+      ],
     );
   }
 
@@ -490,7 +511,36 @@ class _LocationPageState extends State<LocationPage> {
       );
     }
 
-    // Etapa 3: Key válida - mostra localização
+    // Etapa 3: Key válida - mostra localização ou tarefas
+    if (!_showedSnackbar) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showNavigationSnackbar();
+      });
+      _showedSnackbar = true;
+    }
+
+    return _currentIndex == 0 ? _buildLocationTab() : _buildTasksTab();
+  }
+
+  void _showNavigationSnackbar() {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    final snackBar = SnackBar(
+      content: const Text('Key validada com sucesso!'),
+      action: SnackBarAction(
+        label: 'Ver Tarefas',
+        onPressed: () {
+          setState(() {
+            _currentIndex = 1;
+          });
+        },
+      ),
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 3),
+    );
+    ScaffoldMessenger.of(context).showSnackBar(snackBar);
+  }
+
+  Widget _buildLocationTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -530,6 +580,7 @@ class _LocationPageState extends State<LocationPage> {
                         setState(() {
                           _cpf = '';
                           _currentTrip = null;
+                          _currentIndex = 0;
                         });
                       }
                     },
@@ -546,6 +597,37 @@ class _LocationPageState extends State<LocationPage> {
             onStartService: _startService,
             onStopService: _stopService,
             onSyncLocations: _syncLocations,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTasksTab() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.task,
+            size: 64,
+            color: Colors.blue,
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'Tarefas',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Em breve...',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey.shade600,
+            ),
           ),
         ],
       ),
