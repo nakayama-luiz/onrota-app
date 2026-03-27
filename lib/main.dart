@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -11,8 +10,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'data/database_helper.dart';
 import 'models/trip.dart';
-import 'services/api_service.dart';
-import 'widgets/info_row_widget.dart';
+import 'widgets/location_display_widget.dart';
+import 'widgets/key_input_widget.dart';
+import 'widgets/cpf_input_widget.dart';
 
 /// Obtém a key armazenada nas preferências
 Future<String> getStoredKey() async {
@@ -24,6 +24,24 @@ Future<String> getStoredKey() async {
 Future<void> saveStoredKey(String key) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString('log_key', key);
+}
+
+/// Obtém o CPF armazenado nas preferências
+Future<String> getStoredCpf() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getString('cpf') ?? '';
+}
+
+/// Salva o CPF nas preferências
+Future<void> saveStoredCpf(String cpf) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('cpf', cpf);
+}
+
+/// Remove o CPF das preferências
+Future<void> removeStoredCpf() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove('cpf');
 }
 
 /// Obtém a Trip armazenada nas preferências
@@ -203,7 +221,8 @@ Future<(bool, String?)> sendUnsendedLocations() async {
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance? service) async {
-  DartPluginRegistrant.ensureInitialized();
+  // DartPluginRegistrant é inicializado automaticamente pelo Flutter
+  // em versões 3.10+
 
   if (service is AndroidServiceInstance) {
     service.on('setAsForeground').listen((event) {
@@ -294,21 +313,14 @@ class LocationPage extends StatefulWidget {
 
 class _LocationPageState extends State<LocationPage> {
   final FlutterBackgroundService _service = FlutterBackgroundService();
-  Position? _currentPosition;
-  String? facts;
-  String _currentKey = '';
+  String _cpf = '';
   Trip? _currentTrip;
   bool _isRunning = false;
-  bool _isValidatingKey = false;
-  String? _errorMessage;
-  StreamSubscription? _locationSubscription;
-  final TextEditingController _keyController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _setupLocationUpdates();
-    _loadKey();
+    _loadStoredData();
 
     // Solicita permissão ao abrir o app
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -316,110 +328,39 @@ class _LocationPageState extends State<LocationPage> {
     });
   }
 
-  Future<void> _loadKey() async {
-    final key = await getStoredKey();
+  Future<void> _loadStoredData() async {
+    final cpf = await getStoredCpf();
     final trip = await getStoredTrip();
     if (mounted) {
       setState(() {
-        _currentKey = key;
-        _keyController.text = key;
+        _cpf = cpf;
         _currentTrip = trip;
       });
     }
   }
 
-  Future<void> _saveKey() async {
-    final keyToSave = _keyController.text.trim();
-    
-    if (keyToSave.isEmpty) {
-      _showErrorAlert('Digite uma key válida');
-      return;
-    }
-
-    setState(() {
-      _isValidatingKey = true;
-    });
-
-    // Valida a key na API
-    final trip = await ApiService.validateKey(keyToSave);
-
-    if (!mounted) return;
-
-    setState(() {
-      _isValidatingKey = false;
-    });
-
-    if (trip == null) {
-      _showErrorAlert('Key inválida. Verifique e tente novamente.');
-      return;
-    }
-
-    // Key válida, salva a key e a trip
-    await saveStoredKey(keyToSave);
-    await saveStoredTrip(trip);
-    
+  void _handleCpfSubmitted(String cpf) async {
+    await saveStoredCpf(cpf);
     if (mounted) {
       setState(() {
-        _currentKey = keyToSave;
-        _currentTrip = trip;
+        _cpf = cpf;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Key validada e salva com sucesso!')));
     }
   }
 
-  void _setupLocationUpdates() {
-    _locationSubscription = _service.on('update_location').listen((data) {
-      if (data != null) {
-        setState(() {
-          _currentPosition = Position(
-            latitude: data['latitude'],
-            longitude: data['longitude'],
-            accuracy: data['accuracy'],
-            timestamp: DateTime.parse(data['timestamp']),
-            altitude: 0,
-            altitudeAccuracy: 0,
-            heading: 0,
-            headingAccuracy: 0,
-            speed: data['speed'],
-            speedAccuracy: 0,
-          );
-          facts = data['key'] ?? _currentKey;
-          _errorMessage = null;
-        });
-      }
-    });
-
-    _service.on('location_error').listen((data) {
-      if (data != null && data['error'] != null) {
-        setState(() {
-          _errorMessage = data['error'];
-        });
-        _showErrorAlert();
-      }
-    });
-  }
-
-  void _showErrorAlert([String? message]) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: message == null ? const Text('Erro de Localização') : const Text('Erro'),
-        content: Text(message ?? _errorMessage ?? 'Não foi possível obter a localização.'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              setState(() {
-                _errorMessage = null;
-              });
-            },
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
+  void _handleTripChanged(Trip? trip) async {
+    if (trip != null) {
+      await saveStoredTrip(trip);
+      final key = trip.key;
+      await saveStoredKey(key);
+    } else {
+      await removeStoredTrip();
+    }
+    if (mounted) {
+      setState(() {
+        _currentTrip = trip;
+      });
+    }
   }
 
   Future<void> _startService() async {
@@ -439,7 +380,7 @@ class _LocationPageState extends State<LocationPage> {
     _service.invoke('stopService');
     setState(() {
       _isRunning = false;
-      _currentPosition = null;
+      // _currentPosition = null;
     });
   }
 
@@ -469,11 +410,21 @@ class _LocationPageState extends State<LocationPage> {
     );
   }
 
-  @override
-  void dispose() {
-    _keyController.dispose();
-    _locationSubscription?.cancel();
-    super.dispose();
+  void _showErrorAlert(String message) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Erro'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -485,269 +436,120 @@ class _LocationPageState extends State<LocationPage> {
       ),
       body: Column(
         children: [
-          // Painel de status atual
-          Card(
-            margin: const EdgeInsets.all(16),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  // Status da Key
-                  _buildKeyStatusCard(),
-                  const SizedBox(height: 16),
-                  // Input de Key
-                  TextField(
-                    controller: _keyController,
-                    decoration: const InputDecoration(
-                      labelText: 'Key',
-                      hintText: 'Digite a key do log',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.key),
-                    ),
-                    onChanged: (value) {
-                      setState(() {
-                        _currentKey = value;
-                      });
-                    },
-                    onSubmitted: (_) => _saveKey(),
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: _isValidatingKey
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : TextButton(
-                            onPressed: _saveKey,
-                            child: const Text('Validar e Salvar Key'),
-                          ),
-                  ),
-                  // Seção de compartilhamento de localização (só aparece com key válida)
-                  if (_currentTrip != null) ...[
-                    const SizedBox(height: 16),
-                    GestureDetector(
-                      onTap: _syncLocations,
-                      child: Icon(
-                        _isRunning ? Icons.location_on : Icons.location_off,
-                        size: 60,
-                        color: _isRunning ? Colors.green : Colors.grey,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (_currentPosition != null) ...[
-                      InfoRow(
-                        label: 'Latitude',
-                        value: _currentPosition!.latitude.toStringAsFixed(6),
-                      ),
-                      InfoRow(
-                        label: 'Longitude',
-                        value: _currentPosition!.longitude.toStringAsFixed(6),
-                      ),
-                      InfoRow(
-                        label: 'Precisão',
-                        value: '${_currentPosition!.accuracy.toStringAsFixed(1)}m',
-                      ),
-                      InfoRow(
-                        label: 'Atualizado',
-                        value: _formatDate(_currentPosition!.timestamp),
-                      ),
-                      InfoRow(label: 'Trip', value: _currentTrip!.label),
-                    ] else ...[
-                      Text(
-                        _isRunning
-                            ? 'Aguardando localização...'
-                            : 'Serviço parado',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: _isRunning ? Colors.orange : Colors.grey,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: _isRunning ? null : _startService,
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('Iniciar'),
-                        ),
-                        const SizedBox(width: 16),
-                        ElevatedButton.icon(
-                          onPressed: _isRunning ? _stopService : null,
-                          icon: const Icon(Icons.stop),
-                          label: const Text('Parar'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
           Expanded(
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (_currentTrip != null) ...[
-                    Text(
-                      _isRunning ? 'Serviço em execução' : 'Serviço parado',
-                      style: TextStyle(
-                        fontSize: 18,
-                        color: _isRunning ? Colors.green : Colors.grey,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    // Mensagem com nome do motorista
-                    Text(
-                      'Motorista: ${_currentTrip!.driverName}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    // Rota
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.location_on,
-                          size: 16,
-                          color: Colors.green,
-                        ),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            _currentTrip!.startingPointName,
-                            style: const TextStyle(fontSize: 14),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    const Icon(
-                      Icons.arrow_downward,
-                      size: 16,
-                      color: Colors.grey,
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.location_on,
-                          size: 16,
-                          color: Colors.red,
-                        ),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            _currentTrip!.endingPointName,
-                            style: const TextStyle(fontSize: 14),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Key: ${_currentTrip!.key}',
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ] else ...[
-                    const Text(
-                      'Valide uma key para começar a compartilhar sua localização',
-                      style: TextStyle(fontSize: 16, color: Colors.grey),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ],
-              ),
-            ),
+            child: _buildCurrentStep(),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildKeyStatusCard() {
-    if (_currentTrip != null) {
-      return Card(
-        color: Colors.green.shade50,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              const Icon(Icons.check_circle, color: Colors.green, size: 32),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Key Válida',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
-                    Text(
-                      _currentTrip!.label,
-                      style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.clear, color: Colors.red),
-                onPressed: () async {
-                  await removeStoredTrip();
-                  setState(() {
-                    _currentTrip = null;
-                    _currentKey = '';
-                    _keyController.text = '';
-                  });
-                },
-                tooltip: 'Remover key',
-              ),
-            ],
-          ),
-        ),
-      );
-    } else {
-      return Card(
-        color: Colors.orange.shade50,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              const Icon(Icons.warning, color: Colors.orange, size: 32),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: Text(
-                  'Nenhuma key válida',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+  Widget _buildCurrentStep() {
+    // Etapa 1: CPF não preenchido
+    if (_cpf.isEmpty) {
+      return CpfInputWidget(
+        onCpfSubmitted: _handleCpfSubmitted,
       );
     }
-  }
 
-  String _formatDate(DateTime date) {
-    return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}:${date.second.toString().padLeft(2, '0')}';
+    // Etapa 2: CPF preenchido, mas sem key válida
+    if (_currentTrip == null) {
+      return Column(
+        children: [
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'CPF cadastrado: ${_cpf.replaceAll(RegExp(r'(\d{3})(\d{3})(\d{3})(\d{2})'), r'$1.$2.$3-$4')}',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'Por favor, informe sua key para continuar',
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: KeyInputWidget(
+              currentTrip: _currentTrip,
+              onTripChanged: _handleTripChanged,
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Etapa 3: Key válida - mostra localização
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // CPF e informações da trip
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Icon(Icons.person, color: Colors.blue),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Motorista',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        Text(
+                          _currentTrip!.driverName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.logout, color: Colors.grey),
+                    onPressed: () async {
+                      await removeStoredCpf();
+                      await removeStoredTrip();
+                      if (mounted) {
+                        setState(() {
+                          _cpf = '';
+                          _currentTrip = null;
+                        });
+                      }
+                    },
+                    tooltip: 'Sair',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          LocationDisplayWidget(
+            currentTrip: _currentTrip,
+            isRunning: _isRunning,
+            onStartService: _startService,
+            onStopService: _stopService,
+            onSyncLocations: _syncLocations,
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _checkAndRequestLocationPermission() async {
