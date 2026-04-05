@@ -4,7 +4,7 @@ import '../models/trip.dart';
 
 /// Serviço para comunicação com a API
 class ApiService {
-  static const String baseUrl = 'https://api.nakafest.site';
+  static const String baseUrl = 'https://onrota.nakafest.site';
 
   /// Valida uma key buscando informações da trip
   /// Retorna a Trip se sucesso, null se key inválida ou erro

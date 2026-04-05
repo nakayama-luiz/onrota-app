@@ -11,7 +11,6 @@ class LocationDisplayWidget extends StatefulWidget {
   final Trip? currentTrip;
   final bool isRunning;
   final VoidCallback? onStartService;
-  final VoidCallback? onStopService;
   final VoidCallback? onSyncLocations;
 
   const LocationDisplayWidget({
@@ -19,7 +18,6 @@ class LocationDisplayWidget extends StatefulWidget {
     this.currentTrip,
     this.isRunning = false,
     this.onStartService,
-    this.onStopService,
     this.onSyncLocations,
   });
 
@@ -231,23 +229,12 @@ class _LocationDisplayWidgetState extends State<LocationDisplayWidget> {
             ),
           ),
         ],
-        // Botões de controle
+        // Botão de controle
         const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton.icon(
-              onPressed: widget.isRunning ? null : widget.onStartService,
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Iniciar'),
-            ),
-            const SizedBox(width: 16),
-            ElevatedButton.icon(
-              onPressed: widget.isRunning ? widget.onStopService : null,
-              icon: const Icon(Icons.stop),
-              label: const Text('Parar'),
-            ),
-          ],
+        ElevatedButton.icon(
+          onPressed: widget.isRunning ? null : widget.onStartService,
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('Iniciar'),
         ),
       ],
     );

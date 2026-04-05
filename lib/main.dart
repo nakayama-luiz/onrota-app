@@ -155,14 +155,34 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 /// Retorna (true, null) se sucesso, (false, mensagemDeErro) se falhou
 Future<(bool, String?)> sendUnsendedLocations() async {
   try {
+    final key = await getStoredKey();
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'x-api-key': '123',
+    };
+    final url = 'https://onrota.nakafest.site/log';
+
+    final tripResponse = await http.get(
+      Uri.parse('https://onrota.nakafest.site/public/trip/key/$key'),
+      headers: headers,
+    );
+
+    final data = jsonDecode(tripResponse.body);
+    final result = Trip.fromJson(data);
+
+    if (result.status == 'FINISHED') {
+      final service = FlutterBackgroundService();
+      service.invoke('stopService');
+      return (true, null);
+    }
+
     final dbHelper = DatabaseHelper.instance;
     final unsendedLocations = await dbHelper.getUnsendedLocations();
 
     if (unsendedLocations.isEmpty) {
       return (true, null);
     }
-
-    final key = await getStoredKey();
 
     // Prepara a lista de eventos como JSON
     final events = unsendedLocations.map((location) {
@@ -182,12 +202,6 @@ Future<(bool, String?)> sendUnsendedLocations() async {
     final payload = jsonEncode(events);
 
     // Envia para o endpoint usando variáveis de ambiente
-    final url = 'https://api.nakafest.site/log';
-
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'x-api-key': '123',
-    };
 
     // Envia para o endpoint
     final response = await http.post(
@@ -275,7 +289,7 @@ void onStart(ServiceInstance? service) async {
         'accuracy': position.accuracy,
         'timestamp': timestamp,
         'key': key,
-        'speed': position.speed
+        'speed': position.speed,
       });
 
       // Salva no banco de dados
@@ -371,21 +385,15 @@ class _LocationPageState extends State<LocationPage> {
   Future<void> _startService() async {
     // Verifica se há uma key válida antes de iniciar
     if (_currentTrip == null) {
-      _showErrorAlert('É necessário validar uma key antes de iniciar o serviço.');
+      _showErrorAlert(
+        'É necessário validar uma key antes de iniciar o serviço.',
+      );
       return;
     }
-    
+
     await _service.startService();
     setState(() {
       _isRunning = true;
-    });
-  }
-
-  Future<void> _stopService() async {
-    _service.invoke('stopService');
-    setState(() {
-      _isRunning = false;
-      // _currentPosition = null;
     });
   }
 
@@ -440,7 +448,9 @@ class _LocationPageState extends State<LocationPage> {
         backgroundColor: _isRunning ? Colors.green : null,
       ),
       body: _buildCurrentStep(),
-      bottomNavigationBar: _currentTrip != null ? _buildBottomNavigation() : null,
+      bottomNavigationBar: _currentTrip != null
+          ? _buildBottomNavigation()
+          : null,
     );
   }
 
@@ -457,10 +467,7 @@ class _LocationPageState extends State<LocationPage> {
           icon: Icon(Icons.location_on),
           label: 'Localização',
         ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.task),
-          label: 'Tarefas',
-        ),
+        BottomNavigationBarItem(icon: Icon(Icons.task), label: 'Tarefas'),
       ],
     );
   }
@@ -468,9 +475,7 @@ class _LocationPageState extends State<LocationPage> {
   Widget _buildCurrentStep() {
     // Etapa 1: CPF não preenchido
     if (_cpf.isEmpty) {
-      return CpfInputWidget(
-        onCpfSubmitted: _handleCpfSubmitted,
-      );
+      return CpfInputWidget(onCpfSubmitted: _handleCpfSubmitted);
     }
 
     // Etapa 2: CPF preenchido, mas sem key válida
@@ -482,10 +487,7 @@ class _LocationPageState extends State<LocationPage> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
               'CPF cadastrado: ${_cpf.replaceAll(RegExp(r'(\d{3})(\d{3})(\d{3})(\d{2})'), r'$1.$2.$3-$4')}',
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.grey.shade600,
-              ),
+              style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
             ),
           ),
           const SizedBox(height: 8),
@@ -493,10 +495,7 @@ class _LocationPageState extends State<LocationPage> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
               'Por favor, informe sua key para continuar',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
           ),
@@ -595,7 +594,6 @@ class _LocationPageState extends State<LocationPage> {
             currentTrip: _currentTrip,
             isRunning: _isRunning,
             onStartService: _startService,
-            onStopService: _stopService,
             onSyncLocations: _syncLocations,
           ),
         ],
@@ -608,26 +606,16 @@ class _LocationPageState extends State<LocationPage> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(
-            Icons.task,
-            size: 64,
-            color: Colors.blue,
-          ),
+          const Icon(Icons.task, size: 64, color: Colors.blue),
           const SizedBox(height: 24),
           const Text(
             'Tarefas',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
             'Em breve...',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
           ),
         ],
       ),
