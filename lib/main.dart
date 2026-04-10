@@ -299,6 +299,7 @@ void onStart(ServiceInstance? service) async {
         longitude: position.longitude,
         key: key,
         timestamp: timestamp,
+        speed: position.speed,
       );
     } catch (e) {
       print('Erro ao obter localização: $e');

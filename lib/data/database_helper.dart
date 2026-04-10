@@ -18,7 +18,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -38,9 +38,14 @@ class DatabaseHelper {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Migrações serão implementadas conforme necessário
     if (oldVersion < 2) {
-      // Exemplo: await _migrateToV2(db);
+      // Verifica se a coluna speed já existe antes de adicionar
+      final columns = await db.rawQuery('PRAGMA table_info(location)');
+      final columnNames = columns.map((c) => c['name'] as String).toList();
+      
+      if (!columnNames.contains('speed')) {
+        await db.execute('ALTER TABLE location ADD COLUMN speed REAL DEFAULT 0');
+      }
     }
   }
 
@@ -51,6 +56,7 @@ class DatabaseHelper {
     String key = '',
     int sended = 0,
     required String timestamp,
+    double speed = 0,
   }) async {
     final db = await database;
     return await db.insert('location', {
@@ -59,6 +65,7 @@ class DatabaseHelper {
       'longitude': longitude,
       'sended': sended,
       'timestamp': timestamp,
+      'speed': speed,
     });
   }
 
