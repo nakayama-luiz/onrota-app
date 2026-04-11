@@ -383,6 +383,73 @@ class _LocationPageState extends State<LocationPage> {
     }
   }
 
+  /// Verifica todas as permissões necessárias antes de iniciar o serviço
+  /// Retorna uma tupla (temPermissao, mensagemErro)
+  Future<(bool, String?)> _checkAllPermissions() async {
+    // 1. Verificar serviço de localização ativado
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return (
+        false,
+        'O serviço de localização está desativado. '
+            'Ative o GPS nas configurações do dispositivo.',
+      );
+    }
+
+    // 2. Verificar permissão de localização (deve ser "always" para background)
+    LocationPermission locationPermission = await Geolocator.checkPermission();
+
+    if (locationPermission == LocationPermission.denied) {
+      locationPermission = await Geolocator.requestPermission();
+    }
+
+    if (locationPermission == LocationPermission.denied) {
+      return (false, 'Permissão de localização negada.');
+    }
+
+    if (locationPermission == LocationPermission.deniedForever) {
+      return (
+        false,
+        'Permissão de localização negada permanentemente. '
+            'Vá em Configurações > Aplicativos > detalhes > Permissões e ative a permissão de localização.',
+      );
+    }
+
+    // Verificar se é "always" (necessário para background)
+    if (locationPermission != LocationPermission.always) {
+      return (
+        false,
+        'A permissão de localização deve ser definida como "Sempre" para funcionar em background. '
+            'Vá em Configurações > Aplicativos > detalhes > Permissões > Localização > selecione "Sempre".',
+      );
+    }
+
+    // 3. Verificar permissão de notificação (Android 13+)
+    final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+        FlutterLocalNotificationsPlugin();
+    final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+        flutterLocalNotificationsPlugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
+
+    if (androidImplementation != null) {
+      final bool? notificationsAllowed =
+          await androidImplementation.areNotificationsEnabled();
+
+      if (notificationsAllowed == null || !notificationsAllowed) {
+        return (
+          false,
+          'A permissão de notificação é necessária para manter o serviço ativo em background. '
+              'Ative nas configurações do aplicativo.',
+        );
+      }
+    }
+
+    // Todas as permissões OK
+    return (true, null);
+  }
+
   Future<void> _startService() async {
     // Verifica se há uma key válida antes de iniciar
     if (_currentTrip == null) {
@@ -392,6 +459,15 @@ class _LocationPageState extends State<LocationPage> {
       return;
     }
 
+    // Verifica todas as permissões antes de iniciar
+    final (hasPermission, errorMessage) = await _checkAllPermissions();
+
+    if (!hasPermission) {
+      _showErrorAlert(errorMessage ?? 'Permissões insuficientes.');
+      return;
+    }
+
+    // Todas as permissões OK, iniciar serviço
     await _service.startService();
     setState(() {
       _isRunning = true;
@@ -624,40 +700,101 @@ class _LocationPageState extends State<LocationPage> {
   }
 
   Future<void> _checkAndRequestLocationPermission() async {
+    // 1. Verificar serviço de localização ativado
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-
     if (!serviceEnabled) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ative o serviço de localização do dispositivo.'),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ative o serviço de localização do dispositivo.'),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
       return;
     }
 
+    // 2. Verificar permissão atual
     LocationPermission permission = await Geolocator.checkPermission();
 
+    // Se negada, solicitar permissão (mostrará "Ao usar o app" no Android 11+)
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
 
-    if (permission == LocationPermission.denied) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permissão de localização negada.')),
-      );
+    // Se ainda negada ou negada permanentemente
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'A permissão de localização é necessária para o funcionamento do app.',
+            ),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
       return;
     }
 
-    if (permission == LocationPermission.deniedForever) {
+    // 3. Se permissão é "whileInUse", solicitar "always" (Android 11+ requer 2 etapas)
+    if (permission == LocationPermission.whileInUse) {
+      if (mounted) {
+        // Mostrar diálogo explicando por que precisa de "Sempre"
+        final shouldRequest = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Permissão de Localização'),
+            content: const Text(
+              'Para que o monitoramento funcione mesmo com o app fechado, '
+              'é necessário conceder permissão de localização "Sempre".\n\n'
+              'Na próxima tela, selecione "Permitir sempre".',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Continuar'),
+              ),
+            ],
+          ),
+        );
+
+        if (shouldRequest == true) {
+          // Solicitar permissão "always"
+          permission = await Geolocator.requestPermission();
+
+          // Verificar se conseguiu a permissão "always"
+          if (permission != LocationPermission.always) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'É necessário selecionar "Permitir sempre" nas configurações '
+                    'de localização do app para o funcionamento correto.',
+                  ),
+                  duration: Duration(seconds: 8),
+                ),
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // 4. Se permissão "always" concedida, mostrar sucesso
+    if (permission == LocationPermission.always && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Permissão negada permanentemente. Ative nas configurações.',
-          ),
+          content: Text('Permissão de localização "Sempre" concedida!'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
         ),
       );
-      await Geolocator.openAppSettings();
-      return;
     }
   }
 }

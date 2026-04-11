@@ -32,7 +32,8 @@ class DatabaseHelper {
         latitude REAL NOT NULL,
         longitude REAL NOT NULL,
         sended INTEGER NOT NULL DEFAULT 0,
-        timestamp TEXT NOT NULL
+        timestamp TEXT NOT NULL,
+        speed REAL NOT NULL DEFAULT 0
       )
     ''');
   }
