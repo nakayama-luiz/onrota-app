@@ -13,6 +13,7 @@ import 'models/trip.dart';
 import 'widgets/location_display_widget.dart';
 import 'widgets/key_input_widget.dart';
 import 'widgets/cpf_input_widget.dart';
+import 'widgets/route_map_widget.dart';
 
 /// Obtém a key armazenada nas preferências
 Future<String> getStoredKey() async {
@@ -69,6 +70,14 @@ Future<void> saveStoredTrip(Trip trip) async {
     'driver_name': trip.driverName,
     'starting_point_name': trip.startingPointName,
     'ending_point_name': trip.endingPointName,
+    // Loading
+    'loading_latitude': trip.loadingLatitude,
+    'loading_longitude': trip.loadingLongitude,
+    'loading_name': trip.loadingName,
+    // Unloading
+    'unloading_latitude': trip.unloadingLatitude,
+    'unloading_longitude': trip.unloadingLongitude,
+    'unloading_name': trip.unloadingName,
   });
   await prefs.setString('trip_data', tripJson);
 }
@@ -279,7 +288,7 @@ void onStart(ServiceInstance? service) async {
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      final timestamp = DateTime.now().toIso8601String();
+      final timestamp = DateTime.now().toUtc().toIso8601String();
       final key = await getStoredKey();
 
       // Envia atualização via stream
@@ -331,13 +340,34 @@ class _LocationPageState extends State<LocationPage> {
   String _cpf = '';
   Trip? _currentTrip;
   bool _isRunning = false;
-  int _currentIndex = 0; // 0 = Localização, 1 = Tarefas
+  int _currentIndex = 0; // 0 = Localização, 1 = Tarefas, 2 = Rota
   bool _showedSnackbar = false;
+  Position? _currentPosition;
 
   @override
   void initState() {
     super.initState();
     _loadStoredData();
+
+    // Escuta atualizações de localização do background service
+    _service.on('update_location').listen((event) {
+      if (event != null && mounted) {
+        setState(() {
+          _currentPosition = Position(
+            latitude: (event['latitude'] as num).toDouble(),
+            longitude: (event['longitude'] as num).toDouble(),
+            timestamp: DateTime.parse(event['timestamp'] as String),
+            accuracy: (event['accuracy'] as num?)?.toDouble() ?? 0,
+            speed: (event['speed'] as num?)?.toDouble() ?? 0,
+            altitude: 0,
+            speedAccuracy: 0,
+            heading: 0,
+            headingAccuracy: 0,
+            altitudeAccuracy: 0,
+          );
+        });
+      }
+    });
 
     // Solicita permissão ao abrir o app
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -545,6 +575,7 @@ class _LocationPageState extends State<LocationPage> {
           label: 'Localização',
         ),
         BottomNavigationBarItem(icon: Icon(Icons.task), label: 'Tarefas'),
+        BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Rota'),
       ],
     );
   }
@@ -595,7 +626,12 @@ class _LocationPageState extends State<LocationPage> {
       _showedSnackbar = true;
     }
 
-    return _currentIndex == 0 ? _buildLocationTab() : _buildTasksTab();
+    return switch (_currentIndex) {
+      0 => _buildLocationTab(),
+      1 => _buildTasksTab(),
+      2 => _buildRouteTab(),
+      _ => _buildLocationTab(),
+    };
   }
 
   void _showNavigationSnackbar() {
@@ -696,6 +732,13 @@ class _LocationPageState extends State<LocationPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildRouteTab() {
+    return RouteMapWidget(
+      currentTrip: _currentTrip,
+      currentPosition: _currentPosition,
     );
   }
 

@@ -12,6 +12,16 @@ class Trip {
   final String startingPointName;
   final String endingPointName;
 
+  // Loading (ponto de partida) - coordenadas opcionais
+  final double? loadingLatitude;
+  final double? loadingLongitude;
+  final String? loadingName;
+
+  // Unloading (ponto de chegada) - coordenadas opcionais
+  final double? unloadingLatitude;
+  final double? unloadingLongitude;
+  final String? unloadingName;
+
   Trip({
     required this.id,
     required this.label,
@@ -24,7 +34,21 @@ class Trip {
     required this.driverName,
     required this.startingPointName,
     required this.endingPointName,
+    this.loadingLatitude,
+    this.loadingLongitude,
+    this.loadingName,
+    this.unloadingLatitude,
+    this.unloadingLongitude,
+    this.unloadingName,
   });
+
+  /// Verifica se as coordenadas do ponto de partida estão disponíveis
+  bool get hasLoadingCoordinates =>
+      loadingLatitude != null && loadingLongitude != null;
+
+  /// Verifica se as coordenadas do ponto de chegada estão disponíveis
+  bool get hasUnloadingCoordinates =>
+      unloadingLatitude != null && unloadingLongitude != null;
 
   factory Trip.fromJson(Map<String, dynamic> json) {
     return Trip(
@@ -39,6 +63,22 @@ class Trip {
       driverName: json['driver_name'] ?? '',
       startingPointName: json['starting_point_name'] ?? '',
       endingPointName: json['ending_point_name'] ?? '',
+      // Loading coordinates (vêm como strings no nível raiz)
+      loadingLatitude: _parseDouble(json['loadinglatitude']),
+      loadingLongitude: _parseDouble(json['loadinglongitude']),
+      loadingName: json['loadingname'] ?? json['starting_point_name'] ?? '',
+      // Unloading coordinates (vêm como strings no nível raiz)
+      unloadingLatitude: _parseDouble(json['unloadinglatitude']),
+      unloadingLongitude: _parseDouble(json['unloadinglongitude']),
+      unloadingName: json['unloadingname'] ?? json['ending_point_name'] ?? '',
     );
+  }
+
+  /// Helper para converter string ou número em double
+  static double? _parseDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
   }
 }

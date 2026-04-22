@@ -45,7 +45,7 @@ class _LocationDisplayWidgetState extends State<LocationDisplayWidget> {
             latitude: data['latitude'],
             longitude: data['longitude'],
             accuracy: data['accuracy'],
-            timestamp: DateTime.parse(data['timestamp']),
+            timestamp: DateTime.parse(data['timestamp']).toLocal(),
             altitude: 0,
             altitudeAccuracy: 0,
             heading: 0,
