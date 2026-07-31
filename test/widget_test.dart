@@ -1,30 +1,34 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
+import 'package:detalhes/models/trip.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:detalhes/main.dart';
-
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  test('Trip serializes and deserializes expected fields', () {
+    final trip = Trip(
+      id: 7,
+      label: 'Rota teste',
+      description: 'Descrição',
+      status: 'PLANNED',
+      startingPointId: 1,
+      endingPointId: 2,
+      key: 'ROTA-001',
+      driverId: 99,
+      driverName: 'Motorista Teste',
+      startingPointName: 'Origem',
+      endingPointName: 'Destino',
+      loadingLatitude: -23.1,
+      loadingLongitude: -46.2,
+      loadingName: 'Carga',
+      unloadingLatitude: -23.3,
+      unloadingLongitude: -46.4,
+      unloadingName: 'Descarga',
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    final json = trip.toJson();
+    final restored = Trip.fromJson(json);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(restored.key, trip.key);
+    expect(restored.driverName, trip.driverName);
+    expect(restored.loadingLatitude, trip.loadingLatitude);
+    expect(restored.unloadingName, trip.unloadingName);
   });
 }

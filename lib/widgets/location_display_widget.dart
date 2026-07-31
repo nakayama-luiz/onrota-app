@@ -101,7 +101,7 @@ class _LocationDisplayWidgetState extends State<LocationDisplayWidget> {
     if (widget.currentTrip == null) {
       return const Center(
         child: Text(
-          'Valide uma key para começar a compartilhar sua localização',
+          'Valide uma key da viagem para começar a compartilhar sua localização',
           style: TextStyle(fontSize: 16, color: Colors.grey),
           textAlign: TextAlign.center,
         ),
@@ -175,7 +175,7 @@ class _LocationDisplayWidgetState extends State<LocationDisplayWidget> {
         ),
         const SizedBox(height: 16),
         Text(
-          'Key: ${widget.currentTrip!.key}',
+          'Key da viagem: ${widget.currentTrip!.key}',
           style: const TextStyle(fontSize: 12, color: Colors.grey),
         ),
         // Ícone de status

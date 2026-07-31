@@ -5,12 +5,16 @@ import 'package:detalhes/services/api_service.dart';
 /// Widget responsável por gerenciar a entrada e validação da key
 class KeyInputWidget extends StatefulWidget {
   final Trip? currentTrip;
+  final String apiKey;
   final ValueChanged<Trip?> onTripChanged;
+  final VoidCallback onApiKeyInvalid;
 
   const KeyInputWidget({
     super.key,
     this.currentTrip,
+    required this.apiKey,
     required this.onTripChanged,
+    required this.onApiKeyInvalid,
   });
 
   @override
@@ -52,7 +56,10 @@ class _KeyInputWidgetState extends State<KeyInputWidget> {
     });
 
     // Valida a key na API
-    final trip = await ApiService.validateKey(keyToSave);
+    final result = await ApiService.validateKey(
+      keyToSave,
+      apiKey: widget.apiKey,
+    );
 
     if (!mounted) return;
 
@@ -60,18 +67,30 @@ class _KeyInputWidgetState extends State<KeyInputWidget> {
       _isValidating = false;
     });
 
-    if (trip == null) {
-      _showErrorAlert('Key inválida. Verifique e tente novamente.');
+    if (!result.isSuccess) {
+      if (result.status == TripLookupStatus.invalidApiKey) {
+        widget.onApiKeyInvalid();
+        _showErrorAlert(
+          'A API key do cliente foi rejeitada. Reconfigure o dispositivo.',
+        );
+        return;
+      }
+
+      _showErrorAlert(
+        result.message ?? 'Key inválida. Verifique e tente novamente.',
+      );
       return;
     }
 
     // Key válida, notifica o pai
-    widget.onTripChanged(trip);
+    widget.onTripChanged(result.trip);
 
     if (mounted) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Key validada e salva com sucesso!')));
+      ).showSnackBar(
+        const SnackBar(content: Text('Key validada e salva com sucesso!')),
+      );
     }
   }
 
@@ -116,8 +135,8 @@ class _KeyInputWidgetState extends State<KeyInputWidget> {
             TextField(
               controller: _controller,
               decoration: const InputDecoration(
-                labelText: 'Key',
-                hintText: 'Digite a key do log',
+                labelText: 'Key da viagem',
+                hintText: 'Digite a key da viagem',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.key),
               ),

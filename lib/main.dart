@@ -7,85 +7,59 @@ import 'package:geolocator/geolocator.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'data/database_helper.dart';
 import 'models/trip.dart';
+import 'services/installation_storage.dart';
+import 'widgets/api_key_input_widget.dart';
 import 'widgets/location_display_widget.dart';
 import 'widgets/key_input_widget.dart';
 import 'widgets/cpf_input_widget.dart';
 import 'widgets/route_map_widget.dart';
 
-/// Obtém a key armazenada nas preferências
+/// Obtém a key da viagem armazenada nas preferências
 Future<String> getStoredKey() async {
-  final prefs = await SharedPreferences.getInstance();
-  return prefs.getString('log_key') ?? '';
+  final trip = await InstallationStorage.getStoredTrip();
+  return trip?.key ?? '';
 }
 
-/// Salva a key nas preferências
-Future<void> saveStoredKey(String key) async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString('log_key', key);
+/// Obtém a API key do cliente
+Future<String> getStoredApiKey() async {
+  return (await InstallationStorage.getApiKey()) ?? '';
+}
+
+/// Salva a API key do cliente
+Future<String?> saveStoredApiKey(String apiKey) async {
+  return InstallationStorage.saveApiKey(apiKey);
 }
 
 /// Obtém o CPF armazenado nas preferências
 Future<String> getStoredCpf() async {
-  final prefs = await SharedPreferences.getInstance();
-  return prefs.getString('cpf') ?? '';
+  return InstallationStorage.getCpf();
 }
 
 /// Salva o CPF nas preferências
 Future<void> saveStoredCpf(String cpf) async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString('cpf', cpf);
+  await InstallationStorage.saveCpf(cpf);
 }
 
 /// Remove o CPF das preferências
 Future<void> removeStoredCpf() async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.remove('cpf');
+  await InstallationStorage.removeCpf();
 }
 
 /// Obtém a Trip armazenada nas preferências
 Future<Trip?> getStoredTrip() async {
-  final prefs = await SharedPreferences.getInstance();
-  final tripJson = prefs.getString('trip_data');
-  if (tripJson == null || tripJson.isEmpty) {
-    return null;
-  }
-  return Trip.fromJson(jsonDecode(tripJson));
+  return InstallationStorage.getStoredTrip();
 }
 
 /// Salva a Trip nas preferências
 Future<void> saveStoredTrip(Trip trip) async {
-  final prefs = await SharedPreferences.getInstance();
-  final tripJson = jsonEncode({
-    'id': trip.id,
-    'label': trip.label,
-    'description': trip.description,
-    'status': trip.status,
-    'starting_point_id': trip.startingPointId,
-    'ending_point_id': trip.endingPointId,
-    'key': trip.key,
-    'driver_id': trip.driverId,
-    'driver_name': trip.driverName,
-    'starting_point_name': trip.startingPointName,
-    'ending_point_name': trip.endingPointName,
-    // Loading
-    'loading_latitude': trip.loadingLatitude,
-    'loading_longitude': trip.loadingLongitude,
-    'loading_name': trip.loadingName,
-    // Unloading
-    'unloading_latitude': trip.unloadingLatitude,
-    'unloading_longitude': trip.unloadingLongitude,
-    'unloading_name': trip.unloadingName,
-  });
-  await prefs.setString('trip_data', tripJson);
+  await InstallationStorage.saveStoredTrip(trip);
 }
 
 /// Remove a Trip das preferências
 Future<void> removeStoredTrip() async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.remove('trip_data');
+  await InstallationStorage.removeStoredTrip();
 }
 
 Future<void> main() async {
@@ -164,20 +138,55 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 /// Retorna (true, null) se sucesso, (false, mensagemDeErro) se falhou
 Future<(bool, String?)> sendUnsendedLocations() async {
   try {
-    final key = await getStoredKey();
+    final apiKey = await getStoredApiKey();
+    final tripKey = await getStoredKey();
+
+    if (apiKey.isEmpty) {
+      final service = FlutterBackgroundService();
+      await DatabaseHelper.instance.deleteAllLocations();
+      await removeStoredTrip();
+      service.invoke('auth_error', {
+        'message': 'API key do cliente ausente. Reconfigure o dispositivo.',
+      });
+      return (false, 'API key do cliente ausente.');
+    }
+
+    if (tripKey.isEmpty) {
+      return (false, 'Key da viagem ausente.');
+    }
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
-      'x-api-key': '123',
+      'x-api-key': apiKey,
     };
-    final url = 'https://onrota.nakafest.site/log';
+    const url = 'https://onrota.nakafest.site/log';
 
     final tripResponse = await http.get(
-      Uri.parse('https://onrota.nakafest.site/public/trip/key/$key'),
+      Uri.parse('https://onrota.nakafest.site/public/trip/key/$tripKey'),
       headers: headers,
     );
 
-    final data = jsonDecode(tripResponse.body);
+    if (tripResponse.statusCode == 401 || tripResponse.statusCode == 403) {
+      final service = FlutterBackgroundService();
+      await DatabaseHelper.instance.deleteAllLocations();
+      await removeStoredTrip();
+      await InstallationStorage.clearApiKey();
+      service.invoke('auth_error', {
+        'message': 'A API key do cliente foi rejeitada. Reconfigure o dispositivo.',
+      });
+      return (
+        false,
+        'A API key do cliente foi rejeitada. Reconfigure o dispositivo.',
+      );
+    }
+
+    if (tripResponse.statusCode != 200) {
+      final errorMsg = 'Erro ${tripResponse.statusCode}: ${tripResponse.body}';
+      print('Erro ao consultar trip: $errorMsg');
+      return (false, errorMsg);
+    }
+
+    final data = jsonDecode(tripResponse.body) as Map<String, dynamic>;
     final result = Trip.fromJson(data);
 
     if (result.status == 'FINISHED') {
@@ -197,7 +206,7 @@ Future<(bool, String?)> sendUnsendedLocations() async {
     final events = unsendedLocations.map((location) {
       final locationKey = location['key'];
       final effectiveKey = (locationKey == null || locationKey == '')
-          ? key
+          ? tripKey
           : locationKey;
       return {
         'id': location['id'],
@@ -205,6 +214,7 @@ Future<(bool, String?)> sendUnsendedLocations() async {
         'latitude': location['latitude'],
         'longitude': location['longitude'],
         'timestamp': location['timestamp'],
+        'speed': location['speed'] ?? 0,
       };
     }).toList();
 
@@ -225,6 +235,18 @@ Future<(bool, String?)> sendUnsendedLocations() async {
       await dbHelper.markLocationsAsSended(ids);
       print('Localizações enviadas com sucesso: ${ids.length} registros');
       return (true, null);
+    } else if (response.statusCode == 401 || response.statusCode == 403) {
+      final service = FlutterBackgroundService();
+      await DatabaseHelper.instance.deleteAllLocations();
+      await removeStoredTrip();
+      await InstallationStorage.clearApiKey();
+      service.invoke('auth_error', {
+        'message': 'A API key do cliente foi rejeitada durante a sincronização.',
+      });
+      final errorMsg =
+          'A API key do cliente foi rejeitada durante a sincronização.';
+      print(errorMsg);
+      return (false, errorMsg);
     } else {
       final errorMsg = 'Erro ${response.statusCode}: ${response.body}';
       print('Erro ao enviar localizações: $errorMsg');
@@ -261,6 +283,10 @@ void onStart(ServiceInstance? service) async {
     service.stopSelf();
   });
 
+  service?.on('auth_error').listen((event) {
+    service.stopSelf();
+  });
+
   // Envia localizações não enviadas a cada 30 segundos
   Timer.periodic(const Duration(seconds: 30), (timer) async {
     await sendUnsendedLocations();
@@ -290,6 +316,10 @@ void onStart(ServiceInstance? service) async {
 
       final timestamp = DateTime.now().toUtc().toIso8601String();
       final key = await getStoredKey();
+
+      if (key.isEmpty) {
+        return;
+      }
 
       // Envia atualização via stream
       service.invoke('update_location', {
@@ -337,6 +367,7 @@ class LocationPage extends StatefulWidget {
 
 class _LocationPageState extends State<LocationPage> {
   final FlutterBackgroundService _service = FlutterBackgroundService();
+  String _apiKey = '';
   String _cpf = '';
   Trip? _currentTrip;
   bool _isRunning = false;
@@ -369,6 +400,11 @@ class _LocationPageState extends State<LocationPage> {
       }
     });
 
+    _service.on('auth_error').listen((event) async {
+      final message = event?['message'] as String?;
+      await _handleApiKeyInvalid(message);
+    });
+
     // Solicita permissão ao abrir o app
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAndRequestLocationPermission();
@@ -376,10 +412,12 @@ class _LocationPageState extends State<LocationPage> {
   }
 
   Future<void> _loadStoredData() async {
+    final apiKey = await getStoredApiKey();
     final cpf = await getStoredCpf();
     final trip = await getStoredTrip();
     if (mounted) {
       setState(() {
+        _apiKey = apiKey;
         _cpf = cpf;
         _currentTrip = trip;
       });
@@ -395,16 +433,72 @@ class _LocationPageState extends State<LocationPage> {
     }
   }
 
+  Future<void> _handleApiKeySaved(String apiKey) async {
+    final previousApiKey = await saveStoredApiKey(apiKey);
+    final normalizedApiKey = apiKey.trim();
+
+    if (previousApiKey != null &&
+        previousApiKey.trim().isNotEmpty &&
+        previousApiKey.trim() != normalizedApiKey) {
+      await _clearLocalDataForTenantChange();
+    }
+
+    final trip = await getStoredTrip();
+    if (!mounted) return;
+
+    setState(() {
+      _apiKey = normalizedApiKey;
+      _currentTrip = trip;
+      _currentIndex = 0;
+      _showedSnackbar = false;
+    });
+  }
+
+  Future<void> _clearLocalDataForTenantChange() async {
+    await removeStoredTrip();
+    await DatabaseHelper.instance.deleteAllLocations();
+    final service = FlutterBackgroundService();
+    service.invoke('stopService');
+    if (mounted) {
+      setState(() {
+        _isRunning = false;
+      });
+    }
+  }
+
+  Future<void> _handleApiKeyInvalid([String? message]) async {
+    await removeStoredTrip();
+    await InstallationStorage.clearApiKey();
+    await DatabaseHelper.instance.deleteAllLocations();
+    final service = FlutterBackgroundService();
+    service.invoke('stopService');
+
+    if (!mounted) return;
+
+    setState(() {
+      _apiKey = '';
+      _currentTrip = null;
+      _isRunning = false;
+      _currentIndex = 0;
+      _showedSnackbar = false;
+    });
+
+    if (message != null && message.isNotEmpty) {
+      _showErrorAlert(message);
+    }
+  }
+
   void _handleTripChanged(Trip? trip) async {
     if (trip != null) {
       await saveStoredTrip(trip);
-      final key = trip.key;
-      await saveStoredKey(key);
       setState(() {
         _showedSnackbar = false; // Mostra snackbar novamente
       });
     } else {
       await removeStoredTrip();
+      await DatabaseHelper.instance.deleteAllLocations();
+      final service = FlutterBackgroundService();
+      service.invoke('stopService');
     }
     if (mounted) {
       setState(() {
@@ -489,6 +583,13 @@ class _LocationPageState extends State<LocationPage> {
       return;
     }
 
+    if (_apiKey.isEmpty) {
+      _showErrorAlert(
+        'É necessário configurar a API key do cliente antes de iniciar o serviço.',
+      );
+      return;
+    }
+
     // Verifica todas as permissões antes de iniciar
     final (hasPermission, errorMessage) = await _checkAllPermissions();
 
@@ -507,6 +608,12 @@ class _LocationPageState extends State<LocationPage> {
   Future<void> _syncLocations() async {
     final (success, errorMessage) = await sendUnsendedLocations();
     if (!mounted) return;
+
+    if (!success &&
+        errorMessage != null &&
+        errorMessage.contains('API key do cliente')) {
+      return;
+    }
 
     showDialog(
       context: context,
@@ -553,6 +660,15 @@ class _LocationPageState extends State<LocationPage> {
       appBar: AppBar(
         title: const Text('Monitor de Localização'),
         backgroundColor: _isRunning ? Colors.green : null,
+        actions: _apiKey.isNotEmpty
+            ? [
+                IconButton(
+                  tooltip: 'Reconfigurar API key',
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: () => _handleApiKeyInvalid(),
+                ),
+              ]
+            : null,
       ),
       body: _buildCurrentStep(),
       bottomNavigationBar: _currentTrip != null
@@ -581,9 +697,19 @@ class _LocationPageState extends State<LocationPage> {
   }
 
   Widget _buildCurrentStep() {
+    // Etapa 0: API key do cliente não preenchida
+    if (_apiKey.isEmpty) {
+      return ApiKeyInputWidget(
+        currentApiKey: _apiKey,
+        onApiKeySaved: (apiKey) => _handleApiKeySaved(apiKey),
+      );
+    }
+
     // Etapa 1: CPF não preenchido
     if (_cpf.isEmpty) {
-      return CpfInputWidget(onCpfSubmitted: _handleCpfSubmitted);
+      return CpfInputWidget(
+        onCpfSubmitted: (cpf) => _handleCpfSubmitted(cpf),
+      );
     }
 
     // Etapa 2: CPF preenchido, mas sem key válida
@@ -611,7 +737,9 @@ class _LocationPageState extends State<LocationPage> {
           Expanded(
             child: KeyInputWidget(
               currentTrip: _currentTrip,
-              onTripChanged: _handleTripChanged,
+              apiKey: _apiKey,
+              onTripChanged: (trip) => _handleTripChanged(trip),
+              onApiKeyInvalid: () => _handleApiKeyInvalid(),
             ),
           ),
         ],
@@ -688,11 +816,15 @@ class _LocationPageState extends State<LocationPage> {
                     onPressed: () async {
                       await removeStoredCpf();
                       await removeStoredTrip();
+                      await DatabaseHelper.instance.deleteAllLocations();
+                      final service = FlutterBackgroundService();
+                      service.invoke('stopService');
                       if (mounted) {
                         setState(() {
                           _cpf = '';
                           _currentTrip = null;
                           _currentIndex = 0;
+                          _isRunning = false;
                         });
                       }
                     },

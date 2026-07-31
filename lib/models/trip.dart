@@ -74,6 +74,28 @@ class Trip {
     );
   }
 
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'label': label,
+      'description': description,
+      'status': status,
+      'starting_point_id': startingPointId,
+      'ending_point_id': endingPointId,
+      'key': key,
+      'driver_id': driverId,
+      'driver_name': driverName,
+      'starting_point_name': startingPointName,
+      'ending_point_name': endingPointName,
+      'loadinglatitude': loadingLatitude,
+      'loadinglongitude': loadingLongitude,
+      'loadingname': loadingName,
+      'unloadinglatitude': unloadingLatitude,
+      'unloadinglongitude': unloadingLongitude,
+      'unloadingname': unloadingName,
+    };
+  }
+
   /// Helper para converter string ou número em double
   static double? _parseDouble(dynamic value) {
     if (value == null) return null;
