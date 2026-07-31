@@ -10,10 +10,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'data/database_helper.dart';
 import 'models/trip.dart';
 import 'services/installation_storage.dart';
-import 'widgets/api_key_input_widget.dart';
 import 'widgets/location_display_widget.dart';
-import 'widgets/key_input_widget.dart';
 import 'widgets/cpf_input_widget.dart';
+import 'widgets/setup_credentials_widget.dart';
 import 'widgets/route_map_widget.dart';
 
 /// Obtém a key da viagem armazenada nas preferências
@@ -433,17 +432,20 @@ class _LocationPageState extends State<LocationPage> {
     }
   }
 
-  Future<void> _handleApiKeySaved(String apiKey) async {
+  Future<void> _handleSetupCompleted(String apiKey, Trip trip) async {
     final previousApiKey = await saveStoredApiKey(apiKey);
     final normalizedApiKey = apiKey.trim();
 
-    if (previousApiKey != null &&
+    final changedTenant = previousApiKey != null &&
         previousApiKey.trim().isNotEmpty &&
-        previousApiKey.trim() != normalizedApiKey) {
+        previousApiKey.trim() != normalizedApiKey;
+
+    if (changedTenant) {
       await _clearLocalDataForTenantChange();
     }
 
-    final trip = await getStoredTrip();
+    await saveStoredTrip(trip);
+
     if (!mounted) return;
 
     setState(() {
@@ -485,25 +487,6 @@ class _LocationPageState extends State<LocationPage> {
 
     if (message != null && message.isNotEmpty) {
       _showErrorAlert(message);
-    }
-  }
-
-  void _handleTripChanged(Trip? trip) async {
-    if (trip != null) {
-      await saveStoredTrip(trip);
-      setState(() {
-        _showedSnackbar = false; // Mostra snackbar novamente
-      });
-    } else {
-      await removeStoredTrip();
-      await DatabaseHelper.instance.deleteAllLocations();
-      final service = FlutterBackgroundService();
-      service.invoke('stopService');
-    }
-    if (mounted) {
-      setState(() {
-        _currentTrip = trip;
-      });
     }
   }
 
@@ -697,11 +680,13 @@ class _LocationPageState extends State<LocationPage> {
   }
 
   Widget _buildCurrentStep() {
-    // Etapa 0: API key do cliente não preenchida
-    if (_apiKey.isEmpty) {
-      return ApiKeyInputWidget(
+    // Etapa 0: configuração do cliente e da trip
+    if (_apiKey.isEmpty || _currentTrip == null) {
+      return SetupCredentialsWidget(
         currentApiKey: _apiKey,
-        onApiKeySaved: (apiKey) => _handleApiKeySaved(apiKey),
+        currentTrip: _currentTrip,
+        onSetupCompleted: _handleSetupCompleted,
+        onApiKeyInvalid: () => _handleApiKeyInvalid(),
       );
     }
 
@@ -709,40 +694,6 @@ class _LocationPageState extends State<LocationPage> {
     if (_cpf.isEmpty) {
       return CpfInputWidget(
         onCpfSubmitted: (cpf) => _handleCpfSubmitted(cpf),
-      );
-    }
-
-    // Etapa 2: CPF preenchido, mas sem key válida
-    if (_currentTrip == null) {
-      return Column(
-        children: [
-          const SizedBox(height: 24),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'CPF cadastrado: ${_cpf.replaceAll(RegExp(r'(\d{3})(\d{3})(\d{3})(\d{2})'), r'$1.$2.$3-$4')}',
-              style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Por favor, informe sua key para continuar',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: KeyInputWidget(
-              currentTrip: _currentTrip,
-              apiKey: _apiKey,
-              onTripChanged: (trip) => _handleTripChanged(trip),
-              onApiKeyInvalid: () => _handleApiKeyInvalid(),
-            ),
-          ),
-        ],
       );
     }
 
