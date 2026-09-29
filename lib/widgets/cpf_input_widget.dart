@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:detalhes/models/trip.dart';
+import 'package:detalhes/services/api_service.dart';
 
-/// Widget responsável por gerenciar a entrada do CPF
+/// Login do motorista: CPF + placa. Devolve as corridas abertas encontradas.
 class CpfInputWidget extends StatefulWidget {
   final String? currentCpf;
-  final ValueChanged<String> onCpfSubmitted;
+  final void Function(String cpf, List<Trip> trips) onLogin;
 
   const CpfInputWidget({
     super.key,
     this.currentCpf,
-    required this.onCpfSubmitted,
+    required this.onLogin,
   });
 
   @override
@@ -17,7 +19,9 @@ class CpfInputWidget extends StatefulWidget {
 
 class _CpfInputWidgetState extends State<CpfInputWidget> {
   final TextEditingController _controller = TextEditingController();
+  final TextEditingController _placaController = TextEditingController();
   String _formattedCpf = '';
+  bool _loading = false;
 
   @override
   void initState() {
@@ -54,15 +58,29 @@ class _CpfInputWidgetState extends State<CpfInputWidget> {
     return digits.length == 11;
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     final cpf = _controller.text.replaceAll(RegExp(r'\D'), '');
-    
+    final placa = _placaController.text.trim();
+
     if (!_isValidCpf(cpf)) {
       _showErrorAlert('Digite um CPF válido (11 dígitos)');
       return;
     }
 
-    widget.onCpfSubmitted(cpf);
+    if (placa.isEmpty) {
+      _showErrorAlert('Digite a placa do veículo');
+      return;
+    }
+
+    setState(() => _loading = true);
+    try {
+      final trips = await ApiService.login(cpf, placa);
+      widget.onLogin(cpf, trips);
+    } catch (e) {
+      _showErrorAlert(e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   void _showErrorAlert(String message) {
@@ -86,6 +104,7 @@ class _CpfInputWidgetState extends State<CpfInputWidget> {
   void dispose() {
     _controller.removeListener(_onTextChanged);
     _controller.dispose();
+    _placaController.dispose();
     super.dispose();
   }
 
@@ -113,7 +132,7 @@ class _CpfInputWidgetState extends State<CpfInputWidget> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Digite seu CPF para continuar',
+              'Entre com seu CPF e a placa do veículo',
               style: TextStyle(
                 fontSize: 16,
                 color: Colors.grey.shade600,
@@ -131,14 +150,33 @@ class _CpfInputWidgetState extends State<CpfInputWidget> {
                 prefixIcon: Icon(Icons.badge),
                 counterText: '',
               ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _placaController,
+              textCapitalization: TextCapitalization.characters,
+              maxLength: 8,
+              decoration: const InputDecoration(
+                labelText: 'Placa',
+                hintText: 'ABC1D23',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.local_shipping),
+                counterText: '',
+              ),
               onSubmitted: (_) => _submit(),
             ),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: _submit,
-                child: const Text('Continuar'),
+                onPressed: _loading ? null : _submit,
+                child: _loading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Entrar'),
               ),
             ),
           ],

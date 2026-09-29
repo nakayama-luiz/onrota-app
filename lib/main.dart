@@ -11,8 +11,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'data/database_helper.dart';
 import 'models/trip.dart';
 import 'widgets/location_display_widget.dart';
-import 'widgets/key_input_widget.dart';
+import 'widgets/trip_select_widget.dart';
 import 'widgets/cpf_input_widget.dart';
+import 'services/api_service.dart';
 
 /// Obtém a key armazenada nas preferências
 Future<String> getStoredKey() async {
@@ -47,6 +48,9 @@ Future<void> removeStoredCpf() async {
 /// Obtém a Trip armazenada nas preferências
 Future<Trip?> getStoredTrip() async {
   final prefs = await SharedPreferences.getInstance();
+  // O serviço em background roda em outro isolate, com cache próprio das
+  // preferências: sem reload ele não vê a corrida trocada na tela.
+  await prefs.reload();
   final tripJson = prefs.getString('trip_data');
   if (tripJson == null || tripJson.isEmpty) {
     return null;
@@ -57,20 +61,10 @@ Future<Trip?> getStoredTrip() async {
 /// Salva a Trip nas preferências
 Future<void> saveStoredTrip(Trip trip) async {
   final prefs = await SharedPreferences.getInstance();
-  final tripJson = jsonEncode({
-    'id': trip.id,
-    'label': trip.label,
-    'description': trip.description,
-    'status': trip.status,
-    'starting_point_id': trip.startingPointId,
-    'ending_point_id': trip.endingPointId,
-    'key': trip.key,
-    'driver_id': trip.driverId,
-    'driver_name': trip.driverName,
-    'starting_point_name': trip.startingPointName,
-    'ending_point_name': trip.endingPointName,
-  });
-  await prefs.setString('trip_data', tripJson);
+  // ponytail: token da corrida em SharedPreferences, em claro. Ele só grava
+  // posições desta corrida e expira em 7 dias; se virar credencial mais ampla,
+  // mover para flutter_secure_storage.
+  await prefs.setString('trip_data', jsonEncode(trip.toJson()));
 }
 
 /// Remove a Trip das preferências
@@ -85,7 +79,7 @@ Future<void> main() async {
     await dotenv.load(fileName: '.env');
   } catch (e) {
     // Arquivo .env não encontrado, continuando sem variáveis de ambiente
-    print('Aviso: .env não encontrado. Usando valores padrão.');
+    debugPrint('Aviso: .env não encontrado. Usando valores padrão.');
   }
   await initializeService();
   runApp(const MyApp());
@@ -155,18 +149,25 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 /// Retorna (true, null) se sucesso, (false, mensagemDeErro) se falhou
 Future<(bool, String?)> sendUnsendedLocations() async {
   try {
-    final key = await getStoredKey();
+    final trip = await getStoredTrip();
 
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      'x-api-key': '123',
-    };
-    final url = 'https://onrota.nakafest.site/log';
+    if (trip == null || trip.token.isEmpty) {
+      return (false, 'Nenhuma corrida selecionada. Entre com CPF e placa.');
+    }
+
+    final key = trip.key;
+    final headers = ApiService.headers(trip.token);
+    final url = '${ApiService.baseUrl}/log';
 
     final tripResponse = await http.get(
-      Uri.parse('https://onrota.nakafest.site/public/trip/key/$key'),
+      Uri.parse('${ApiService.baseUrl}/public/trip/key/$key'),
       headers: headers,
     );
+
+    // Token expirado/inválido não melhora com retentativa: pede novo login.
+    if (tripResponse.statusCode == 401 || tripResponse.statusCode == 403) {
+      return (false, 'Sessão expirada. Saia e entre novamente com CPF e placa.');
+    }
 
     final data = jsonDecode(tripResponse.body);
     final result = Trip.fromJson(data);
@@ -178,7 +179,12 @@ Future<(bool, String?)> sendUnsendedLocations() async {
     }
 
     final dbHelper = DatabaseHelper.instance;
-    final unsendedLocations = await dbHelper.getUnsendedLocations();
+    // O token só grava na própria corrida: posições pendentes de outra corrida
+    // (ou de outro cliente) nunca saem com ele.
+    // ponytail: essas ficam na fila local; limpar se o volume incomodar.
+    final unsendedLocations = (await dbHelper.getUnsendedLocations())
+        .where((l) => l['key'] == null || l['key'] == '' || l['key'] == key)
+        .toList();
 
     if (unsendedLocations.isEmpty) {
       return (true, null);
@@ -214,21 +220,21 @@ Future<(bool, String?)> sendUnsendedLocations() async {
       // Marca como enviadas
       final ids = unsendedLocations.map((l) => l['id'] as int).toList();
       await dbHelper.markLocationsAsSended(ids);
-      print('Localizações enviadas com sucesso: ${ids.length} registros');
+      debugPrint('Localizações enviadas com sucesso: ${ids.length} registros');
       return (true, null);
     } else {
       final errorMsg = 'Erro ${response.statusCode}: ${response.body}';
-      print('Erro ao enviar localizações: $errorMsg');
+      debugPrint('Erro ao enviar localizações: $errorMsg');
       return (false, errorMsg);
     }
   } on http.ClientException catch (e) {
     final errorMsg =
         'Sem conexão com a internet. Verifique sua rede e tente novamente.';
-    print('Erro de conexão ao enviar localizações: $e');
+    debugPrint('Erro de conexão ao enviar localizações: $e');
     return (false, errorMsg);
   } catch (e) {
     final errorMsg = 'Erro ao enviar: ${e.toString()}';
-    print('Erro ao enviar localizações: $errorMsg');
+    debugPrint('Erro ao enviar localizações: $errorMsg');
     return (false, errorMsg);
   }
 }
@@ -301,7 +307,7 @@ void onStart(ServiceInstance? service) async {
         timestamp: timestamp,
       );
     } catch (e) {
-      print('Erro ao obter localização: $e');
+      debugPrint('Erro ao obter localização: $e');
       service.invoke('location_error', {
         'error': 'Não foi possível obter a localização: ${e.toString()}',
       });
@@ -328,6 +334,7 @@ class LocationPage extends StatefulWidget {
 class _LocationPageState extends State<LocationPage> {
   final FlutterBackgroundService _service = FlutterBackgroundService();
   String _cpf = '';
+  List<Trip>? _trips; // resultado do login, antes de escolher a corrida
   Trip? _currentTrip;
   bool _isRunning = false;
   int _currentIndex = 0; // 0 = Localização, 1 = Tarefas
@@ -350,17 +357,21 @@ class _LocationPageState extends State<LocationPage> {
     if (mounted) {
       setState(() {
         _cpf = cpf;
-        _currentTrip = trip;
+        // Corrida salva por versão antiga (sem token) não envia nada: novo login.
+        _currentTrip = (trip == null || trip.token.isEmpty) ? null : trip;
       });
     }
   }
 
-  void _handleCpfSubmitted(String cpf) async {
+  void _handleLogin(String cpf, List<Trip> trips) async {
     await saveStoredCpf(cpf);
-    if (mounted) {
-      setState(() {
-        _cpf = cpf;
-      });
+    if (!mounted) return;
+    setState(() {
+      _cpf = cpf;
+      _trips = trips;
+    });
+    if (trips.length == 1) {
+      _handleTripChanged(trips.first);
     }
   }
 
@@ -386,7 +397,7 @@ class _LocationPageState extends State<LocationPage> {
     // Verifica se há uma key válida antes de iniciar
     if (_currentTrip == null) {
       _showErrorAlert(
-        'É necessário validar uma key antes de iniciar o serviço.',
+        'É necessário selecionar uma corrida antes de iniciar o serviço.',
       );
       return;
     }
@@ -473,44 +484,21 @@ class _LocationPageState extends State<LocationPage> {
   }
 
   Widget _buildCurrentStep() {
-    // Etapa 1: CPF não preenchido
-    if (_cpf.isEmpty) {
-      return CpfInputWidget(onCpfSubmitted: _handleCpfSubmitted);
-    }
-
-    // Etapa 2: CPF preenchido, mas sem key válida
     if (_currentTrip == null) {
-      return Column(
-        children: [
-          const SizedBox(height: 24),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'CPF cadastrado: ${_cpf.replaceAll(RegExp(r'(\d{3})(\d{3})(\d{3})(\d{2})'), r'$1.$2.$3-$4')}',
-              style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Por favor, informe sua key para continuar',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: KeyInputWidget(
-              currentTrip: _currentTrip,
-              onTripChanged: _handleTripChanged,
-            ),
-          ),
-        ],
+      // Etapa 1: login por CPF + placa
+      if (_trips == null) {
+        return CpfInputWidget(currentCpf: _cpf, onLogin: _handleLogin);
+      }
+
+      // Etapa 2: mais de uma corrida aberta — o motorista escolhe
+      return TripSelectWidget(
+        trips: _trips!,
+        onSelected: _handleTripChanged,
+        onBack: () => setState(() => _trips = null),
       );
     }
 
-    // Etapa 3: Key válida - mostra localização ou tarefas
+    // Etapa 3: corrida selecionada - mostra localização ou tarefas
     if (!_showedSnackbar) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _showNavigationSnackbar();
@@ -524,7 +512,7 @@ class _LocationPageState extends State<LocationPage> {
   void _showNavigationSnackbar() {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     final snackBar = SnackBar(
-      content: const Text('Key validada com sucesso!'),
+      content: const Text('Corrida selecionada!'),
       action: SnackBarAction(
         label: 'Ver Tarefas',
         onPressed: () {
@@ -578,6 +566,7 @@ class _LocationPageState extends State<LocationPage> {
                       if (mounted) {
                         setState(() {
                           _cpf = '';
+                          _trips = null;
                           _currentTrip = null;
                           _currentIndex = 0;
                         });
@@ -624,6 +613,7 @@ class _LocationPageState extends State<LocationPage> {
 
   Future<void> _checkAndRequestLocationPermission() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!mounted) return;
 
     if (!serviceEnabled) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -635,9 +625,11 @@ class _LocationPageState extends State<LocationPage> {
     }
 
     LocationPermission permission = await Geolocator.checkPermission();
+    if (!mounted) return;
 
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
+      if (!mounted) return;
     }
 
     if (permission == LocationPermission.denied) {
